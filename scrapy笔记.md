@@ -161,5 +161,170 @@ ITEM_PIPELINES = {
            print("over....")
    ```
 
-3. 
 
+## CrawSpider
+
+需要使用`LinkExtractor`和`Rule`，这两个东西决定爬虫的具体走向。
+
+执行： `scrapy genspider -t crawl 爬虫名字 爬虫域名`
+
+1. allow设置规则的方法：要能够限制在我们想要的url上面。不要跟其他的url产生相同的正则表达式即可。
+2. 什么情况下使用follow：如果在爬取页面的时候，需要将满足当前条件的url在进行跟进，那么设置为True，否则为False
+3. 什么情况下该指定callback：如果这个url对应的页面，只是为了获取更多的url，并不需要里面的数据，那么可以不指定callback。如果想要获取url对应页面的数据，那么就需要指定一个callback。
+
+实例代码：
+
+```python
+import scrapy
+from scrapy.linkextractors import LinkExtractor
+from scrapy.spiders import CrawlSpider, Rule
+
+from ..items import ScrapystudyItem
+
+
+class WxappSpiderSpider(CrawlSpider):
+    name = 'wxapp_spider'
+    allowed_domains = ['www.wxapp-union.com']
+    start_urls = ['https://www.wxapp-union.com/portal.php?mod=list&catid=2&page=1']
+
+    rules = (
+        Rule(LinkExtractor(allow=r'.+mod=list&catid=2&page=\d'), follow=True),
+        Rule(LinkExtractor(allow=r".+article-.+\.html"), callback="parse_detail", follow=False)
+    )
+
+    def parse_detail(self, response):
+        title = response.xpath("//h1[@class='ph']/text()").get()
+        author_p = response.xpath("//p[@class='authors']")
+        author = author_p.xpath(".//a/text()").get()
+        pub_time = author_p.xpath(".//span/text()").get()
+        article_content = response.xpath("//td[@id='article_content']//text()").getall()
+        content = "".join(article_content).strip()
+        item = ScrapystudyItem(title=title, author=author, pub_time=pub_time, content=content)
+        yield item
+```
+
+## 爬取存入mysql
+
+### 两个方法
+
+两者方法 见示例
+
+**第一种**
+
+```python
+import pymysql
+class ScrapystudyPipeline:
+    def __init__(self):
+        #各种参数
+        dbparams={
+            'host':'123.56.13.242',
+            'port':3306,
+            'user':'root',
+            'password':'Aliyun2021',
+            'database':'test',
+            'charset':'utf8'
+        }
+        #连接
+        self.conn=pymysql.connect(**dbparams)
+        #调用cursor方法
+        self.cursor=self.conn.cursor()
+        self._sql=None
+    def process_item(self, item, spider):
+        #运行
+        self.cursor.execute(self.sql,(item['id'],item['name'],item['introduction']))
+        #存入数据库
+        self.conn.commit()
+        return item
+
+    #属性
+    @property
+    def sql(self):
+        if not self._sql:
+            self._sql="""
+            insert into collection(id,name,introduction) values (%s,%s,%s)
+            """
+            return self._sql
+        return self._sql
+```
+
+**第二种**
+
+```python
+#优化的
+from twisted.enterprise import adbapi
+from pymysql import cursors
+class ScrapystudygogoPipeline:
+    def __init__(self):
+        #参数
+        dbparams={
+            'host':'123.56.13.242',
+            'port':3306,
+            'user':'root',
+            'password':'Aliyun2021',
+            'database':'test',
+            'charset':'utf8',
+            'cursorclass':cursors.DictCursor
+        }
+        #用ConnectionPool连接池，效率提高
+        self.dbpool=adbapi.ConnectionPool('pymysql',**dbparams)
+        self._sql=None
+
+    @property
+    def sql(self):
+        if not self._sql:
+            self._sql="""
+            insert into collection(id,name,introduction) values (%s,%s,%s)
+            """
+            return self._sql
+        return self._sql
+
+    def process_item(self, item, spider):
+        defer=self.dbpool.runInteraction(self.insert_item,item)
+        #错误信息
+        defer.addErrback(self.handle_error,item,spider)
+    def insert_item(self,cursor,item):
+        #插入
+        cursor.execute(self.sql,(item['id'],item['name'],item['introduction']))
+
+    def handle_error(self,error,item,spider):
+        print("="*10+"error"+"="*10)
+        print(error)
+        print("=" * 10 + "error" + "=" * 10)
+```
+
+### 更新方法
+
+**第一种**
+
+sql语句中加入`on duplicate key update`后面是要修改的值
+
+```python
+self._sql = """
+insert into text1(id,num,name) values (%s,%s,%s)
+ on duplicate key update num =values (num),name =values (name )
+"""
+```
+
+**第二种**
+
+用`replace into`
+
+ 1）如果主键值重复，那么覆盖表中已有的行       
+
+ 2）如果没有主键值重复，则插入该行
+
+```python
+self._sql = """
+            replace into text1(id,num,name) values (%s,%s,%s)
+            """
+```
+
+## 爬取网页 网页显示的结构和真实结构不一样
+
+见`NjMuseum.py` 
+
+```python
+#网上级标签寻找，找到有输出的，然后查看输出文字的标签
+#或者分析网页的结构 判断是第几个标签 用数字代替class
+col_info=response.xpath("//div[@class='basicrightcon']/div[3]").get()
+```
