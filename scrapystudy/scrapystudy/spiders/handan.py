@@ -12,7 +12,7 @@ class HandanSpider(scrapy.Spider):
     base_url="https://www.hdmuseum.org"
 
     custom_settings = {
-        'ITEM_PIPELINES':{'scrapystudy.pipelines.HandanPipleline':300}
+        'ITEM_PIPELINES':{'scrapystudy.pipelines.HandanPipeline':300}
     }
     def start_requests(self):
         url = "https://www.hdmuseum.org/Product/Query"
